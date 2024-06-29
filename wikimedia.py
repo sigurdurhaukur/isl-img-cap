@@ -3,19 +3,24 @@ import os
 from PIL import Image
 import re
 from tqdm import tqdm
+import json
 
 
 class WikipediaAPI:
     def __init__(self, save_path="wikimedia", lang="is"):
         self.save_path = save_path
+        self.train_path = f"{self.save_path}/train"
+        self.val_path = f"{self.save_path}/val"
         self.lang = lang
         self.url = f"https://{lang}.wikipedia.org/w/api.php"
 
         self.init_dirs()
 
     def init_dirs(self):
-        os.makedirs(self.save_path + "/images", exist_ok=True)
-        os.makedirs(self.save_path + "/text", exist_ok=True)
+
+        os.makedirs(self.save_path, exist_ok=True)
+        os.makedirs(self.train_path, exist_ok=True)
+        os.makedirs(self.val_path, exist_ok=True)
 
     def remove_markdown(self, text):
         if not text:
@@ -58,7 +63,10 @@ class WikipediaAPI:
 
         return text.strip()
 
-    def get_random_image(self, id=0):
+    def get_random_image(self, id=0, split=None):
+        if split is None:
+            split = self.train_path
+
         # Parameters for getting a random page
         params = {
             "format": "json",
@@ -105,26 +113,50 @@ class WikipediaAPI:
         filename = filename.split("/")[-1]
         filetypes = [".jpg", ".jpeg", ".png"]
         if not any(filetype in filename for filetype in filetypes) or not description:
-            return self.get_random_image()
+            return self.get_random_image(id=id, split=split)
 
         # Download the image
         save_filename = f"{id}.{filename.split('.')[-1]}".replace("Mynd:", "")
-        path = f"{self.save_path}/images/{save_filename}"
+
+        path = f"{split}/{save_filename}"
+
         os.system(f"wget -q -O {path} {url}")
+        img_path = self.convert_to_jpg(img_path=path, id=id, save_path=split)
 
-        self.convert_to_jpg(path, id=id)
+        # Save metadata
+        metadata = {
+            "file_name": img_path.split("/")[-1],
+            "text": self.remove_markdown(description.replace("'", "").replace('"', "")),
+        }
 
-        txt = self.remove_markdown(description)
-        with open(f"{self.save_path}/text/{id}.txt", "w") as f:
-            f.write(txt)
+        self.save_metadata(split, str(metadata))
 
-    def convert_to_jpg(self, img_path, id=0):
+    def save_metadata(self, path, metadata):
+        with open(f"{path}/metadata.jsonl", "a", encoding="utf-8") as f:
+            jsonl = json.dumps(metadata, ensure_ascii=False)
+
+            # jsonl hack
+            jsonl = jsonl[1:-1]
+            jsonl = jsonl.replace("'", '"')
+            f.write(jsonl + "\n")
+
+    def convert_to_jpg(self, img_path, id=0, save_path="."):
+        save_path = f"{save_path}/{id}.jpg"
         # convert to jpg
         if img_path.split(".")[-1] != "jpg":
             img = Image.open(img_path)
             img = img.convert("RGB")
-            img.save(f"{self.save_path}/images/{id}.jpg")
+            img.save(save_path)
             os.remove(img_path)
+
+        return save_path
+
+    def get_n_random_images(self, n=10, split=None):
+        for i in tqdm(range(n), desc="Downloading images"):
+            if split is not None and i >= n * split:
+                self.get_random_image(id=i)
+            else:
+                self.get_random_image(id=i, split=self.val_path)
 
 
 if __name__ == "__main__":
